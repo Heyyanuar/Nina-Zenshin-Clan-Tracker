@@ -90,7 +90,7 @@ function loadLocalStorageBaseline() {
       updateSoundButtonUI();
     }
   } catch (e) {
-    console.error("Gagal memuat baseline dari localStorage:", e);
+    console.error("Failed to load baseline from localStorage:", e);
   }
 }
 
@@ -102,7 +102,7 @@ function saveLocalStorageBaseline() {
     localStorage.setItem("nz_live_feed", JSON.stringify(state.liveFeed));
     localStorage.setItem("nz_recent_gains", JSON.stringify(state.recentGains));
   } catch (e) {
-    console.error("Gagal menyimpan baseline ke localStorage:", e);
+    console.error("Failed to save baseline to localStorage:", e);
   }
 }
 
@@ -219,7 +219,7 @@ async function fetchClanRankings() {
     renderSessionSummary();
     
   } catch (error) {
-    console.error("Gagal sinkronisasi data ranking clan:", error);
+    console.error("Failed to sync clan rankings:", error);
     setSyncStatus("SYNC ERROR", "error");
   }
 }
@@ -228,10 +228,10 @@ async function fetchClanRankings() {
 async function fetchClanMembers(clanId) {
   try {
     const response = await fetch(`/api/members?clanId=${clanId}`);
-    if (!response.ok) throw new Error("Gagal mengambil daftar member");
+    if (!response.ok) throw new Error("Failed to fetch members list");
     return await response.json();
   } catch (e) {
-    console.error(`Gagal mengambil data member untuk clan ${clanId}:`, e);
+    console.error(`Failed to fetch members data for clan ${clanId}:`, e);
     return null;
   }
 }
@@ -421,7 +421,7 @@ function renderLeaderboard() {
     tbody.innerHTML = `
       <tr>
         <td colspan="6" class="text-center py-4 text-muted">
-          Tidak ada clan atau member yang cocok dengan pencarian "${state.searchQuery}"
+          No clans or members match search "${state.searchQuery}"
         </td>
       </tr>
     `;
@@ -434,7 +434,7 @@ function renderLeaderboard() {
     
     // Get recent gains HTML
     const activeGains = getActiveRecentGains(clan.id);
-    let activityHtml = `<span class="text-muted" style="opacity: 0.5; font-size: 0.8rem;">Tidak ada aktivitas</span>`;
+    let activityHtml = `<span class="text-muted" style="opacity: 0.5; font-size: 0.8rem;">No activity</span>`;
     
     if (activeGains.length > 0) {
       // Group same members gains if multiple in short span, or just show last 3
@@ -500,7 +500,7 @@ function renderLiveFeed() {
           <span class="feed-time">${timeStr}</span>
         </div>
         <div class="feed-body">
-          Ninja <strong>${escapeHtml(event.memberName)}</strong> mendapatkan <span class="gain-text">+${event.gain.toLocaleString()} Rep</span>!
+          Ninja <strong>${escapeHtml(event.memberName)}</strong> gained <span class="gain-text">+${event.gain.toLocaleString()} Rep</span>!
         </div>
       </div>
     `;
@@ -519,7 +519,7 @@ function renderSessionSummary() {
   if (sortedClans.length === 0) {
     summaryEl.innerHTML = `
       <div class="log-empty">
-        Belum ada reputasi yang bertambah di sesi ini.
+        No reputation has increased in this session yet.
       </div>
     `;
     return;
@@ -559,7 +559,7 @@ async function openMembersModal(clanId, clanName) {
   if (!data || !data.members) {
     modalBody.innerHTML = `
       <div class="text-center py-4 text-muted">
-        Gagal memuat daftar anggota clan. Silakan coba lagi.
+        Failed to load clan members list. Please try again.
       </div>
     `;
     return;
@@ -571,7 +571,7 @@ async function openMembersModal(clanId, clanName) {
       <thead>
         <tr>
           <th style="width: 50px;">#</th>
-          <th>Nama Member</th>
+          <th>Member Name</th>
           <th class="text-center" style="width: 80px;">Level</th>
           <th class="text-right" style="width: 120px;">Reputation</th>
         </tr>
@@ -582,7 +582,7 @@ async function openMembersModal(clanId, clanName) {
   if (members.length === 0) {
     tableHtml += `
       <tr>
-        <td colspan="4" class="text-center py-4 text-muted">Tidak ada member di clan ini.</td>
+        <td colspan="4" class="text-center py-4 text-muted">No members in this clan.</td>
       </tr>
     `;
   } else {

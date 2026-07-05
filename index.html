@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="id">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Ninja Zenshin Clan Ranking Tracker. Pantau pergerakan reputasi clan, kontribusi member, dan aktivitas clan war secara realtime.">
+    <meta name="description" content="Ninja Zenshin Clan Ranking Tracker. Monitor clan reputation, member contributions, and clan war activities in real-time.">
     <title>Ninja Zenshin - Realtime Clan Ranking Tracker</title>
     
     <!-- Google Fonts -->
@@ -77,7 +77,7 @@
                         <div class="card-header">
                             <h2>Clan Leaderboard</h2>
                             <div class="search-box">
-                                <input type="text" id="searchInput" placeholder="Cari Clan atau Member...">
+                                <input type="text" id="searchInput" placeholder="Search Clan or Member...">
                                 <span class="search-icon">🔍</span>
                             </div>
                         </div>
@@ -105,7 +105,7 @@
                             </table>
                         </div>
                         <div class="card-footer">
-                            Klik nama clan untuk melihat daftar lengkap member • Reputasi diupdate otomatis setiap 30 detik
+                            Click a clan name to view full member list • Reputation updates automatically every 30 seconds
                         </div>
                     </div>
                 </div>
@@ -121,7 +121,7 @@
                         </div>
                         <div class="log-feed" id="liveActivityFeed">
                             <div class="log-empty">
-                                Menunggu pergerakan reputasi dari server game...
+                                Waiting for reputation changes from the game server...
                             </div>
                         </div>
                     </div>
@@ -133,7 +133,7 @@
                         </div>
                         <div class="stats-body" id="sessionSummaryBody">
                             <div class="log-empty">
-                                Belum ada reputasi yang bertambah di sesi ini.
+                                No reputation has increased in this session yet.
                             </div>
                         </div>
                     </div>
@@ -152,7 +152,7 @@
             <div class="modal-box">
                 <div class="modal-header">
                     <h3 id="modalClanTitle">Clan Name</h3>
-                    <button class="modal-close-btn" id="modalCloseBtn" aria-label="Tutup Modal">&times;</button>
+                    <button class="modal-close-btn" id="modalCloseBtn" aria-label="Close Modal">&times;</button>
                 </div>
                 <div class="modal-body" id="modalClanBody">
                     <div class="text-center py-4">
