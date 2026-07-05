@@ -1,7 +1,6 @@
 /**
  * Ninja Zenshin Clan Ranking Tracker - Frontend Application
- * Handles polling, baseline differential tracking, UI rendering,
- * search filtering, Web Audio chime synthesis, and modal views.
+ * Integrated with client-side Stamina & Bleeding Simulation Engine.
  */
 
 // Application State
@@ -9,17 +8,25 @@ const state = {
   season: "Season --",
   countdownEnd: "",
   clans: [],            // List of clans: { rank, id, name, master, members, reputation }
-  clanBaselines: {},    // Baseline data: { [clanId]: { reputation: X, members: { [memberName]: rep } } }
+  clanBaselines: {},    // Baseline data for reputation tracking: { [clanId]: { reputation: X, members: { [memberName]: rep } } }
   recentGains: {},      // Recent gains per clan for table column: { [clanId]: [ { name, gain, timestamp } ] }
   sessionGains: {},     // Cumulative gains per clan for session summary: { [clanName]: totalGain }
-  liveFeed: [],         // Array of feed events: { memberName, clanName, gain, timestamp }
+  liveFeed: [],         // Array of feed events: { memberName, clanName, gain, timestamp, isSystemEvent }
   muted: false,         // Audio notification state
   isInitialLoad: true,  // Flag to prevent logging gains on first page load
   lastSyncTime: null,
   pollIntervalId: null,
   countdownIntervalId: null,
+  clockIntervalId: null,
   activeClanIdForModal: null,
-  searchQuery: ""
+  searchQuery: "",
+  
+  // Stamina & Bleeding Simulation State
+  clanStamina: {},      // Stamina database: { [clanId]: { [memberName]: staminaValue } }
+  bleedingClans: {},    // Bleeding state: { [clanId]: boolean }
+  defendingTargetRank: 1, // Default defender rank (1 = Top 1, 2 = Top 2, 3 = Top 3)
+  attackPartySize: "solo", // "solo" (drains 1), "party1" (drains 2), "party2" (drains 3)
+  lastRecoveryCheckedMinute: -1
 };
 
 // Config
@@ -69,7 +76,7 @@ function formatTime(date) {
   return `${h}:${m}:${s}`;
 }
 
-// Load baseline state from LocalStorage on start
+// Load baseline and stamina state from LocalStorage on start
 function loadLocalStorageBaseline() {
   try {
     const savedBaselines = localStorage.getItem("nz_clan_baselines");
@@ -78,6 +85,12 @@ function loadLocalStorageBaseline() {
     const savedRecentGains = localStorage.getItem("nz_recent_gains");
     const savedMute = localStorage.getItem("nz_muted");
     
+    // Stamina states
+    const savedStamina = localStorage.getItem("nz_clan_stamina");
+    const savedBleeding = localStorage.getItem("nz_bleeding_clans");
+    const savedTarget = localStorage.getItem("nz_defending_target");
+    const savedPartySize = localStorage.getItem("nz_attack_party_size");
+    
     if (savedBaselines) {
       state.clanBaselines = JSON.parse(savedBaselines);
       state.isInitialLoad = false; // We have baseline, so any new difference is a real-time update!
@@ -85,22 +98,42 @@ function loadLocalStorageBaseline() {
     if (savedSessionGains) state.sessionGains = JSON.parse(savedSessionGains);
     if (savedFeed) state.liveFeed = JSON.parse(savedFeed);
     if (savedRecentGains) state.recentGains = JSON.parse(savedRecentGains);
+    
     if (savedMute !== null) {
       state.muted = savedMute === "true";
       updateSoundButtonUI();
+    }
+    
+    if (savedStamina) state.clanStamina = JSON.parse(savedStamina);
+    if (savedBleeding) state.bleedingClans = JSON.parse(savedBleeding);
+    if (savedTarget) {
+      state.defendingTargetRank = parseInt(savedTarget, 10);
+      const targetSelect = document.getElementById("defendingTargetSelect");
+      if (targetSelect) targetSelect.value = state.defendingTargetRank;
+    }
+    if (savedPartySize) {
+      state.attackPartySize = savedPartySize;
+      const radio = document.querySelector(`input[name="attackType"][value="${state.attackPartySize}"]`);
+      if (radio) radio.checked = true;
     }
   } catch (e) {
     console.error("Failed to load baseline from localStorage:", e);
   }
 }
 
-// Save current baseline state to LocalStorage
+// Save current baseline and stamina state to LocalStorage
 function saveLocalStorageBaseline() {
   try {
     localStorage.setItem("nz_clan_baselines", JSON.stringify(state.clanBaselines));
     localStorage.setItem("nz_session_gains", JSON.stringify(state.sessionGains));
     localStorage.setItem("nz_live_feed", JSON.stringify(state.liveFeed));
     localStorage.setItem("nz_recent_gains", JSON.stringify(state.recentGains));
+    
+    // Stamina states
+    localStorage.setItem("nz_clan_stamina", JSON.stringify(state.clanStamina));
+    localStorage.setItem("nz_bleeding_clans", JSON.stringify(state.bleedingClans));
+    localStorage.setItem("nz_defending_target", state.defendingTargetRank);
+    localStorage.setItem("nz_attack_party_size", state.attackPartySize);
   } catch (e) {
     console.error("Failed to save baseline to localStorage:", e);
   }
@@ -217,6 +250,8 @@ async function fetchClanRankings() {
     renderLeaderboard();
     renderLiveFeed();
     renderSessionSummary();
+    renderBleedingWidget();
+    populateOpsClanSelect();
     
   } catch (error) {
     console.error("Failed to sync clan rankings:", error);
@@ -239,12 +274,9 @@ async function fetchClanMembers(clanId) {
 // Diffing engine: analyzes changes in clan reputation and triggers member scans
 async function processClanDataChanges() {
   const activeClans = state.clans.filter(c => c.reputation > 0);
-  
-  // Stagger helper to fetch members list sequentially to prevent server rate limiting
   const delay = (ms) => new Promise(res => setTimeout(res, ms));
 
   if (state.isInitialLoad) {
-    // Establishing baseline for the first time
     setSyncStatus("ESTABLISHING BASELINE...", "syncing");
     
     // Scans top 10 clans to establish member level baselines immediately
@@ -252,15 +284,24 @@ async function processClanDataChanges() {
     for (let i = 0; i < baselineScans.length; i++) {
       const clan = baselineScans[i];
       const memberData = await fetchClanMembers(clan.id);
+      
+      if (!state.clanStamina[clan.id]) state.clanStamina[clan.id] = {};
+      
       if (memberData && memberData.members) {
         const memberBaselines = {};
         memberData.members.forEach(m => {
           memberBaselines[m.name] = m.rep || 0;
+          // Initialize stamina baseline (default 200)
+          if (state.clanStamina[clan.id][m.name] === undefined) {
+            state.clanStamina[clan.id][m.name] = 200;
+          }
         });
         state.clanBaselines[clan.id] = {
           reputation: clan.reputation,
           members: memberBaselines
         };
+        // Evaluate initial bleeding status
+        checkAndUpdateBleedingStatus(clan.id);
       }
       await delay(200); // 200ms sleep between fetches to avoid rate-limiting
     }
@@ -270,9 +311,10 @@ async function processClanDataChanges() {
       if (!state.clanBaselines[clan.id]) {
         state.clanBaselines[clan.id] = {
           reputation: clan.reputation,
-          members: {} // Will load lazily if reputation changes
+          members: {}
         };
       }
+      if (!state.clanStamina[clan.id]) state.clanStamina[clan.id] = {};
     });
     
     state.isInitialLoad = false;
@@ -287,18 +329,24 @@ async function processClanDataChanges() {
     const clan = activeClans[i];
     const baseline = state.clanBaselines[clan.id];
     
+    if (!state.clanStamina[clan.id]) state.clanStamina[clan.id] = {};
+    
     // If clan is brand new or not in baseline
     if (!baseline) {
       state.clanBaselines[clan.id] = {
         reputation: clan.reputation,
         members: {}
       };
-      // Fetch members immediately to establish base
+      
       const memberData = await fetchClanMembers(clan.id);
       if (memberData && memberData.members) {
         memberData.members.forEach(m => {
           state.clanBaselines[clan.id].members[m.name] = m.rep || 0;
+          if (state.clanStamina[clan.id][m.name] === undefined) {
+            state.clanStamina[clan.id][m.name] = 200;
+          }
         });
+        checkAndUpdateBleedingStatus(clan.id);
       }
       await delay(200);
       continue;
@@ -306,9 +354,6 @@ async function processClanDataChanges() {
     
     // Check if total reputation has increased
     if (clan.reputation !== baseline.reputation) {
-      const isGain = clan.reputation > baseline.reputation;
-      
-      // Fetch fresh member list to see who gained/changed rep
       const memberData = await fetchClanMembers(clan.id);
       if (memberData && memberData.members) {
         const oldMembers = baseline.members || {};
@@ -320,11 +365,18 @@ async function processClanDataChanges() {
           const oldRep = oldMembers[m.name] !== undefined ? oldMembers[m.name] : 0;
           const newRep = m.rep || 0;
           
+          if (state.clanStamina[clan.id][m.name] === undefined) {
+            state.clanStamina[clan.id][m.name] = 200;
+          }
+          
           if (newRep > oldRep && oldMembers[m.name] !== undefined) {
             const gain = newRep - oldRep;
             
             // Log the gain event
             logGainEvent(m.name, clan.name, clan.id, gain);
+            
+            // Process Stamina Drain simulation for this attack!
+            simulateStaminaDrain(m.name, clan.id, clan.name);
             
             // Cumulative stats
             if (!state.sessionGains[clan.name]) state.sessionGains[clan.name] = 0;
@@ -332,7 +384,7 @@ async function processClanDataChanges() {
             
             if (!playedSound) {
               playChime();
-              playedSound = true; // only play chime once per poll interval
+              playedSound = true;
             }
           }
         });
@@ -343,11 +395,137 @@ async function processClanDataChanges() {
           members: newMembers
         };
       }
-      await delay(250); // delay after fetching to be polite to the server
+      await delay(250);
     }
   }
   
   saveLocalStorageBaseline();
+}
+
+// Stamina Drain Simulation logic
+function simulateStaminaDrain(attackerName, attackerClanId, attackerClanName) {
+  // 1. Attacker (Party Leader) loses 10 stamina
+  if (!state.clanStamina[attackerClanId]) state.clanStamina[attackerClanId] = {};
+  if (state.clanStamina[attackerClanId][attackerName] === undefined) {
+    state.clanStamina[attackerClanId][attackerName] = 200;
+  }
+  
+  const currentAttackerStam = state.clanStamina[attackerClanId][attackerName];
+  if (currentAttackerStam < 10) {
+    // Insufficient stamina warning log
+    logSystemEvent(`[Stamina Warning] Attacker ${attackerName} (${attackerClanName}) had less than 10 Stamina (${currentAttackerStam}) but attacked anyway.`);
+  }
+  
+  state.clanStamina[attackerClanId][attackerName] = Math.max(50, currentAttackerStam - 10);
+  checkAndUpdateBleedingStatus(attackerClanId);
+
+  // 2. Identify defending target clan based on settings (Rank 1, 2, or 3)
+  const sortedClans = [...state.clans].sort((a, b) => a.rank - b.rank);
+  const targetIndex = state.defendingTargetRank - 1; // 0, 1, or 2
+  
+  if (targetIndex >= sortedClans.length) return;
+  const defenderClan = sortedClans[targetIndex];
+  
+  // Attacker cannot attack their own clan
+  if (defenderClan.id === attackerClanId) return;
+
+  // 3. Enforce Bleeding status protection
+  const isDefenderBleeding = state.bleedingClans[defenderClan.id] === true;
+  if (isDefenderBleeding) {
+    logSystemEvent(`[Stamina Protection] Attack from ${attackerClanName} hit ${defenderClan.name}, but Stamina Drain was skipped (Defender is Bleeding).`);
+    return;
+  }
+
+  // 4. Drain defender members stamina (N members with highest stamina, clamp at 50)
+  let drainCount = 1; // Solo = 1
+  if (state.attackPartySize === "party1") drainCount = 2;
+  if (state.attackPartySize === "party2") drainCount = 3;
+
+  // Initialize defender stamina structure if empty
+  if (!state.clanStamina[defenderClan.id]) state.clanStamina[defenderClan.id] = {};
+  
+  // If defender members aren't loaded in stamina DB, fetch or initialize from baseline
+  const defenderStaminaList = state.clanStamina[defenderClan.id];
+  
+  // Get all members in defender clan
+  const membersList = Object.entries(defenderStaminaList);
+  
+  if (membersList.length === 0) {
+    // Lazily fetch defender members to initialize their stamina baseline
+    fetchClanMembers(defenderClan.id).then(data => {
+      if (data && data.members) {
+        data.members.forEach(m => {
+          if (state.clanStamina[defenderClan.id][m.name] === undefined) {
+            state.clanStamina[defenderClan.id][m.name] = 200;
+          }
+        });
+        // Run drain again on loaded list
+        applyDefenderDrain(defenderClan.id, defenderClan.name, drainCount);
+      }
+    });
+  } else {
+    applyDefenderDrain(defenderClan.id, defenderClan.name, drainCount);
+  }
+}
+
+// Helper to sort and apply drain to defender's top players
+function applyDefenderDrain(defenderClanId, defenderClanName, count) {
+  const memberList = Object.entries(state.clanStamina[defenderClanId]);
+  
+  // Sort members by stamina descending
+  memberList.sort((a, b) => b[1] - a[1]);
+  
+  const drainedNames = [];
+  // Deduct stamina from the top N members
+  for (let i = 0; i < Math.min(count, memberList.length); i++) {
+    const [name, stam] = memberList[i];
+    const newStam = Math.max(50, stam - 10);
+    state.clanStamina[defenderClanId][name] = newStam;
+    drainedNames.push(`${name} (${newStam})`);
+  }
+  
+  checkAndUpdateBleedingStatus(defenderClanId);
+  
+  if (drainedNames.length > 0) {
+    logSystemEvent(`[Stamina Drain] Drained ${drainedNames.length} defender(s) from ${defenderClanName}: ${drainedNames.join(", ")}`);
+  }
+}
+
+// Evaluate and toggle Bleeding state for a clan
+function checkAndUpdateBleedingStatus(clanId) {
+  if (!state.clanStamina[clanId]) return false;
+  
+  const memberStaminas = Object.values(state.clanStamina[clanId]);
+  const totalMembers = memberStaminas.length;
+  
+  if (totalMembers === 0) return false;
+  
+  const lowStaminaCount = memberStaminas.filter(s => s <= 70).length;
+  const isCurrentlyBleeding = state.bleedingClans[clanId] === true;
+  
+  let newBleedState = isCurrentlyBleeding;
+  
+  if (!isCurrentlyBleeding) {
+    // Enter Bleeding state if 50% or more members have <= 70 Stamina
+    if ((lowStaminaCount / totalMembers) >= 0.5) {
+      newBleedState = true;
+      const clan = state.clans.find(c => c.id === parseInt(clanId, 10));
+      const clanName = clan ? clan.name : `Clan #${clanId}`;
+      logSystemEvent(`[🚨 BLEEDING TRIGGERED] Clan **${clanName}** has entered the Bleeding state! Stamina Drain has stopped.`, true);
+    }
+  } else {
+    // Exit Bleeding state only when ALL members reach exactly 200/200 stamina
+    const allRecovered = memberStaminas.every(s => s === 200);
+    if (allRecovered) {
+      newBleedState = false;
+      const clan = state.clans.find(c => c.id === parseInt(clanId, 10));
+      const clanName = clan ? clan.name : `Clan #${clanId}`;
+      logSystemEvent(`[🛡️ BLEEDING RESOLVED] Clan **${clanName}** has fully recovered! Stamina level restored to healthy status.`, true);
+    }
+  }
+  
+  state.bleedingClans[clanId] = newBleedState;
+  return newBleedState;
 }
 
 // Log a gain event to feed and recent gains list
@@ -359,19 +537,14 @@ function logGainEvent(memberName, clanName, clanId, gain) {
     memberName,
     clanName,
     gain,
-    timestamp: timestamp.toISOString()
+    timestamp: timestamp.toISOString(),
+    isSystemEvent: false
   });
   
-  // Keep live feed capped at 50 logs
-  if (state.liveFeed.length > 50) {
-    state.liveFeed.pop();
-  }
+  if (state.liveFeed.length > 50) state.liveFeed.pop();
   
-  // 2. Add to clan recent gains array (for the table column)
-  if (!state.recentGains[clanId]) {
-    state.recentGains[clanId] = [];
-  }
-  
+  // 2. Add to clan recent gains array
+  if (!state.recentGains[clanId]) state.recentGains[clanId] = [];
   state.recentGains[clanId].push({
     name: memberName,
     gain,
@@ -379,17 +552,25 @@ function logGainEvent(memberName, clanName, clanId, gain) {
   });
 }
 
+// Log generic system event to the live activity feed
+function logSystemEvent(msg, important = false) {
+  const timestamp = new Date();
+  state.liveFeed.unshift({
+    message: msg,
+    timestamp: timestamp.toISOString(),
+    isSystemEvent: true,
+    important: important
+  });
+  if (state.liveFeed.length > 50) state.liveFeed.pop();
+  renderLiveFeed();
+}
+
 // Filter out recent gains that are older than GAIN_EXPIRY_MS (10 mins)
 function getActiveRecentGains(clanId) {
   const list = state.recentGains[clanId] || [];
   const now = Date.now();
-  
-  // Filter out expired gains
   const filtered = list.filter(item => (now - item.timestamp) < GAIN_EXPIRY_MS);
-  
-  // Update state with filtered list
   state.recentGains[clanId] = filtered;
-  
   return filtered;
 }
 
@@ -400,16 +581,10 @@ function renderLeaderboard() {
   
   const query = state.searchQuery.toLowerCase().trim();
   
-  // Filter clans based on search query (checks clan name, master, or recent member gains)
   const filteredClans = state.clans.filter(clan => {
     if (!query) return true;
+    if (clan.name.toLowerCase().includes(query) || clan.master.toLowerCase().includes(query)) return true;
     
-    // Check clan name or master
-    if (clan.name.toLowerCase().includes(query) || clan.master.toLowerCase().includes(query)) {
-      return true;
-    }
-    
-    // Check if any member with recent gain matches search
     const gains = getActiveRecentGains(clan.id);
     const matchesMember = gains.some(g => g.name.toLowerCase().includes(query));
     if (matchesMember) return true;
@@ -432,12 +607,15 @@ function renderLeaderboard() {
     const isTop10 = clan.rank <= 10;
     const rowClass = isTop10 ? 'class="t10"' : '';
     
+    // Check if bleeding
+    const isBleeding = state.bleedingClans[clan.id] === true;
+    const bleedBadge = isBleeding ? `<span class="clan-bleed-badge"><span class="bleed-droplet">🩸</span> BLEEDING</span>` : '';
+    
     // Get recent gains HTML
     const activeGains = getActiveRecentGains(clan.id);
     let activityHtml = `<span class="text-muted" style="opacity: 0.5; font-size: 0.8rem;">No activity</span>`;
     
     if (activeGains.length > 0) {
-      // Group same members gains if multiple in short span, or just show last 3
       const displayedGains = activeGains.slice(-3).reverse();
       activityHtml = `
         <div class="cell-recent-gains">
@@ -458,6 +636,7 @@ function renderLeaderboard() {
           <span class="clan-name-btn" data-clan-id="${clan.id}" data-clan-name="${escapeHtml(clan.name)}">
             ${escapeHtml(clan.name || "ㅤ")}
           </span>
+          ${bleedBadge}
         </td>
         <td class="col-master">${escapeHtml(clan.master || "ㅤ")}</td>
         <td class="col-members text-center">${clan.members}</td>
@@ -467,7 +646,7 @@ function renderLeaderboard() {
     `;
   }).join("");
   
-  // Attach event listeners to Clan Buttons
+  // Attach event listeners
   tbody.querySelectorAll(".clan-name-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const clanId = btn.getAttribute("data-clan-id");
@@ -485,7 +664,7 @@ function renderLiveFeed() {
   if (state.liveFeed.length === 0) {
     feedEl.innerHTML = `
       <div class="log-empty">
-        Menunggu pergerakan reputasi dari server game...
+        Waiting for reputation changes from the game server...
       </div>
     `;
     return;
@@ -493,6 +672,20 @@ function renderLiveFeed() {
   
   feedEl.innerHTML = state.liveFeed.map(event => {
     const timeStr = formatTime(new Date(event.timestamp));
+    
+    if (event.isSystemEvent) {
+      const importantClass = event.important ? "style='border-left-color: var(--accent-red); background: rgba(192,25,44,0.08); font-weight:600; color:#fff;'" : "style='border-left-color: var(--accent-gold); opacity: 0.85;'";
+      return `
+        <div class="feed-item" ${importantClass}>
+          <div class="feed-header">
+            <span class="feed-clan-badge" style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.15); color: var(--accent-gold);">SYSTEM</span>
+            <span class="feed-time">${timeStr}</span>
+          </div>
+          <div class="feed-body">${event.message}</div>
+        </div>
+      `;
+    }
+    
     return `
       <div class="feed-item gain-event">
         <div class="feed-header">
@@ -533,6 +726,58 @@ function renderSessionSummary() {
   `).join("");
 }
 
+// Render Bleeding widget list in sidebar
+function renderBleedingWidget() {
+  const body = document.getElementById("bleedingWidgetBody");
+  const activeCountEl = document.getElementById("bleedingActiveCount");
+  if (!body) return;
+  
+  // Find all bleeding clans
+  const bleedingClansList = state.clans.filter(clan => state.bleedingClans[clan.id] === true);
+  
+  if (activeCountEl) {
+    activeCountEl.textContent = `${bleedingClansList.length} BLEEDING`;
+    activeCountEl.style.backgroundColor = bleedingClansList.length > 0 ? "var(--accent-red)" : "var(--accent-green-bg)";
+    activeCountEl.style.color = bleedingClansList.length > 0 ? "#fff" : "var(--accent-green)";
+  }
+  
+  if (bleedingClansList.length === 0) {
+    body.innerHTML = `
+      <div class="log-empty">
+        All clans have healthy stamina levels.
+      </div>
+    `;
+    return;
+  }
+  
+  body.innerHTML = bleedingClansList.map(clan => {
+    const staminas = Object.values(state.clanStamina[clan.id] || {});
+    const total = staminas.length;
+    const fullyRecovered = staminas.filter(s => s === 200).length;
+    const avg = total > 0 ? Math.round(staminas.reduce((a,b)=>a+b, 0) / total) : 200;
+    
+    return `
+      <div class="bleed-clan-card">
+        <div class="bleed-clan-header">
+          <span class="bleed-clan-name">
+            <span class="bleed-droplet">🩸</span> ${escapeHtml(clan.name)} (Rank ${clan.rank})
+          </span>
+          <span class="bleed-recovery-fraction" title="Members at 200 Stamina">
+            Recovered: ${fullyRecovered}/${total}
+          </span>
+        </div>
+        <div class="bleed-stats-grid">
+          <div>Avg Stamina: <span class="bleed-stat-val">${avg}</span></div>
+          <div>Low Stamina: <span class="bleed-stat-val">${staminas.filter(s => s <= 70).length}</span></div>
+        </div>
+        <div class="stamina-bar-container">
+          <div class="stamina-bar low" style="width: ${(avg/200)*100}%;"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
 // Open members modal and fetch details from proxy
 async function openMembersModal(clanId, clanName) {
   state.activeClanIdForModal = clanId;
@@ -552,8 +797,6 @@ async function openMembersModal(clanId, clanName) {
   modal.style.display = "flex";
   
   const data = await fetchClanMembers(clanId);
-  
-  // Check if user has closed the modal or changed active modal during fetch
   if (state.activeClanIdForModal !== clanId) return;
   
   if (!data || !data.members) {
@@ -566,14 +809,24 @@ async function openMembersModal(clanId, clanName) {
   }
   
   const members = data.members || [];
+  
+  // Ensure stamina entries exist in state DB
+  if (!state.clanStamina[clanId]) state.clanStamina[clanId] = {};
+  members.forEach(m => {
+    if (state.clanStamina[clanId][m.name] === undefined) {
+      state.clanStamina[clanId][m.name] = 200;
+    }
+  });
+  
   let tableHtml = `
     <table class="clr-mtable">
       <thead>
         <tr>
           <th style="width: 50px;">#</th>
           <th>Member Name</th>
-          <th class="text-center" style="width: 80px;">Level</th>
-          <th class="text-right" style="width: 120px;">Reputation</th>
+          <th class="text-center" style="width: 60px;">Level</th>
+          <th class="text-right" style="width: 100px;">Reputation</th>
+          <th style="width: 170px;">Simulated Stamina</th>
         </tr>
       </thead>
       <tbody>
@@ -582,17 +835,28 @@ async function openMembersModal(clanId, clanName) {
   if (members.length === 0) {
     tableHtml += `
       <tr>
-        <td colspan="4" class="text-center py-4 text-muted">No members in this clan.</td>
+        <td colspan="5" class="text-center py-4 text-muted">No members in this clan.</td>
       </tr>
     `;
   } else {
     members.forEach((m, idx) => {
+      const stam = state.clanStamina[clanId][m.name] || 200;
+      let stamClass = "high";
+      if (stam <= 70) stamClass = "low";
+      else if (stam <= 120) stamClass = "medium";
+      
       tableHtml += `
         <tr>
           <td>${idx + 1}</td>
           <td style="font-weight: 600;">${escapeHtml(m.name)}</td>
           <td class="text-center">${m.level || '-'}</td>
           <td class="text-right modal-rep-val">${Number(m.rep || 0).toLocaleString()}</td>
+          <td class="modal-stamina-cell">
+            <div class="stamina-bar-container">
+              <div class="stamina-bar ${stamClass}" style="width: ${(stam/200)*100}%;"></div>
+            </div>
+            <span class="modal-stamina-val ${stamClass}">${stam}/200</span>
+          </td>
         </tr>
       `;
     });
@@ -627,6 +891,79 @@ function escapeHtml(str) {
   });
 }
 
+// Populate manual stamina adjustment clan dropdown
+function populateOpsClanSelect() {
+  const select = document.getElementById("opsClanSelect");
+  if (!select) return;
+  
+  // If already populated, preserve selection unless list changed size
+  const activeClans = state.clans.filter(c => c.reputation > 0);
+  if (select.options.length > 1 && select.options.length === activeClans.length + 1) return;
+  
+  // Clear other options
+  select.innerHTML = '<option value="">-- Choose Clan --</option>';
+  
+  activeClans.forEach(clan => {
+    const opt = document.createElement("option");
+    opt.value = clan.id;
+    opt.textContent = `${clan.name} (Rank ${clan.rank})`;
+    select.appendChild(opt);
+  });
+}
+
+// Check SGT time and trigger +60 stamina recovery on :00 and :30
+function checkStaminaRecoveryTicks(sgtTime) {
+  const currentMinute = sgtTime.getMinutes();
+  const currentSecond = sgtTime.getSeconds();
+  
+  // Trigger recovery twice an hour (exactly on minute 00 and 30)
+  if ((currentMinute === 0 || currentMinute === 30) && currentSecond < 10) {
+    if (state.lastRecoveryCheckedMinute !== currentMinute) {
+      state.lastRecoveryCheckedMinute = currentMinute;
+      
+      let recoveryCount = 0;
+      Object.keys(state.clanStamina).forEach(clanId => {
+        const clanStam = state.clanStamina[clanId];
+        Object.keys(clanStam).forEach(name => {
+          const oldStam = clanStam[name];
+          if (oldStam < 200) {
+            clanStam[name] = Math.min(200, oldStam + 60);
+            recoveryCount++;
+          }
+        });
+        checkAndUpdateBleedingStatus(clanId);
+      });
+      
+      logSystemEvent(`[Server Clock] Stamina Recovery: +60 Stamina restored to all players in the simulator (Total members updated: ${recoveryCount}).`);
+      playChime();
+      saveLocalStorageBaseline();
+      renderLeaderboard();
+      renderBleedingWidget();
+    }
+  } else if (currentMinute !== 0 && currentMinute !== 30) {
+    // Reset tracker flag once minute passes
+    state.lastRecoveryCheckedMinute = -1;
+  }
+}
+
+// Update server SGT clock and check recovery ticks
+function updateServerClock() {
+  const clockEl = document.getElementById("serverTimeClock");
+  if (!clockEl) return;
+  
+  // Singapore Standard Time (SGT) is UTC+8
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const sgtTime = new Date(utc + (3600000 * 8));
+  
+  const h = String(sgtTime.getHours()).padStart(2, '0');
+  const m = String(sgtTime.getMinutes()).padStart(2, '0');
+  const s = String(sgtTime.getSeconds()).padStart(2, '0');
+  clockEl.textContent = `${h}:${m}:${s} SGT`;
+  
+  checkStaminaRecoveryTicks(sgtTime);
+}
+
 // Setup Event Listeners
 function setupEventListeners() {
   // 1. Refresh Button
@@ -644,10 +981,7 @@ function setupEventListeners() {
       state.muted = !state.muted;
       localStorage.setItem("nz_muted", state.muted);
       updateSoundButtonUI();
-      // play sound test if unmuted
-      if (!state.muted) {
-        playChime();
-      }
+      if (!state.muted) playChime();
     });
   }
   
@@ -669,18 +1003,182 @@ function setupEventListeners() {
   const modalOverlay = document.getElementById("membersModal");
   if (modalOverlay) {
     modalOverlay.addEventListener("click", (e) => {
-      if (e.target === modalOverlay) {
-        closeMembersModal();
-      }
+      if (e.target === modalOverlay) closeMembersModal();
     });
   }
   
-  // Close modal on Escape key press
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") {
-      closeMembersModal();
-    }
+    if (e.key === "Escape") closeMembersModal();
   });
+
+  // 5. Collapsible Settings Panel
+  const settingsHeader = document.getElementById("settingsToggleHeader");
+  const settingsBody = document.getElementById("settingsCollapseBody");
+  const settingsIcon = document.getElementById("settingsToggleIcon");
+  if (settingsHeader && settingsBody) {
+    settingsHeader.addEventListener("click", () => {
+      const isHidden = settingsBody.style.display === "none";
+      settingsBody.style.display = isHidden ? "block" : "none";
+      settingsIcon.textContent = isHidden ? "▲ Close Settings" : "▼ Toggle Settings";
+    });
+  }
+
+  // 6. Attack Target Selection
+  const targetSelect = document.getElementById("defendingTargetSelect");
+  if (targetSelect) {
+    targetSelect.addEventListener("change", (e) => {
+      state.defendingTargetRank = parseInt(e.target.value, 10);
+      saveLocalStorageBaseline();
+      logSystemEvent(`[Config Update] Defending Target Clan changed to Rank ${state.defendingTargetRank} in standings.`);
+    });
+  }
+
+  // 7. Attack Party Size selection (Radio buttons)
+  document.querySelectorAll('input[name="attackType"]').forEach(radio => {
+    radio.addEventListener("change", (e) => {
+      state.attackPartySize = e.target.value;
+      saveLocalStorageBaseline();
+      const label = e.target.parentNode.textContent.trim();
+      logSystemEvent(`[Config Update] Assumed party size updated to: "${label}".`);
+    });
+  });
+
+  // 8. Stamina adjustment dropdown links
+  const opsClanSelect = document.getElementById("opsClanSelect");
+  const opsMemberSelect = document.getElementById("opsMemberSelect");
+  const manualStamInput = document.getElementById("manualStaminaInput");
+  const saveMemberBtn = document.getElementById("saveMemberStaminaBtn");
+  const resetClanBtn = document.getElementById("resetClanStaminaBtn");
+
+  if (opsClanSelect && opsMemberSelect) {
+    opsClanSelect.addEventListener("change", async (e) => {
+      const clanId = e.target.value;
+      
+      // Disable member fields and reset values
+      opsMemberSelect.innerHTML = '<option value="">-- Select Member --</option>';
+      opsMemberSelect.disabled = true;
+      manualStamInput.disabled = true;
+      saveMemberBtn.disabled = true;
+
+      if (!clanId) {
+        resetClanBtn.disabled = true;
+        return;
+      }
+      
+      resetClanBtn.disabled = false;
+
+      // Populate members
+      let staminaEntries = state.clanStamina[clanId];
+      
+      // If empty in cache, load members list
+      if (!staminaEntries || Object.keys(staminaEntries).length === 0) {
+        opsMemberSelect.innerHTML = '<option value="">Loading members...</option>';
+        const data = await fetchClanMembers(clanId);
+        
+        if (!state.clanStamina[clanId]) state.clanStamina[clanId] = {};
+        
+        if (data && data.members) {
+          data.members.forEach(m => {
+            if (state.clanStamina[clanId][m.name] === undefined) {
+              state.clanStamina[clanId][m.name] = 200;
+            }
+          });
+        }
+      }
+      
+      opsMemberSelect.innerHTML = '<option value="">-- Select Member --</option>';
+      opsMemberSelect.disabled = false;
+      
+      // Re-fetch populated lists
+      staminaEntries = state.clanStamina[clanId] || {};
+      const sortedNames = Object.keys(staminaEntries).sort();
+      
+      sortedNames.forEach(name => {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = `${name} (${staminaEntries[name]}/200)`;
+        opsMemberSelect.appendChild(opt);
+      });
+    });
+
+    opsMemberSelect.addEventListener("change", (e) => {
+      const memberName = e.target.value;
+      const clanId = opsClanSelect.value;
+      
+      if (!memberName || !clanId) {
+        manualStamInput.disabled = true;
+        saveMemberBtn.disabled = true;
+        return;
+      }
+
+      manualStamInput.disabled = false;
+      saveMemberBtn.disabled = false;
+      
+      const currentStam = state.clanStamina[clanId][memberName] || 200;
+      manualStamInput.value = currentStam;
+    });
+
+    // 9. Save Manual Stamina Override
+    saveMemberBtn.addEventListener("click", () => {
+      const clanId = opsClanSelect.value;
+      const memberName = opsMemberSelect.value;
+      const newStam = Math.min(200, Math.max(50, parseInt(manualStamInput.value, 10)));
+      
+      if (!clanId || !memberName || isNaN(newStam)) return;
+      
+      state.clanStamina[clanId][memberName] = newStam;
+      checkAndUpdateBleedingStatus(clanId);
+      saveLocalStorageBaseline();
+      
+      // Refresh member select options text
+      const selectedIndex = opsMemberSelect.selectedIndex;
+      opsMemberSelect.options[selectedIndex].textContent = `${memberName} (${newStam}/200)`;
+      
+      logSystemEvent(`[Manual Override] Set ${memberName}'s stamina to ${newStam}/200.`);
+      
+      renderLeaderboard();
+      renderBleedingWidget();
+      
+      // If modal is open for this clan, refresh it
+      if (state.activeClanIdForModal === clanId) {
+        const clan = state.clans.find(c => c.id === parseInt(clanId, 10));
+        openMembersModal(clanId, clan ? clan.name : "Clan");
+      }
+    });
+
+    // 10. Reset entire Clan Stamina
+    resetClanBtn.addEventListener("click", () => {
+      const clanId = opsClanSelect.value;
+      if (!clanId) return;
+      
+      const clan = state.clans.find(c => c.id === parseInt(clanId, 10));
+      const clanName = clan ? clan.name : `Clan #${clanId}`;
+      
+      if (!state.clanStamina[clanId]) state.clanStamina[clanId] = {};
+      
+      // Set all cached members to 200
+      Object.keys(state.clanStamina[clanId]).forEach(name => {
+        state.clanStamina[clanId][name] = 200;
+      });
+      
+      // Reset Bleeding status
+      state.bleedingClans[clanId] = false;
+      checkAndUpdateBleedingStatus(clanId); // double check state machine resets
+      saveLocalStorageBaseline();
+      
+      logSystemEvent(`[Manual Reset] Reset all members of **${clanName}** to 200 Stamina (Bleeding cleared).`, true);
+      
+      // Trigger select re-render
+      opsClanSelect.dispatchEvent(new Event("change"));
+      
+      renderLeaderboard();
+      renderBleedingWidget();
+      
+      if (state.activeClanIdForModal === clanId) {
+        openMembersModal(clanId, clanName);
+      }
+    });
+  }
 }
 
 // Clean up expired gains loop
@@ -690,14 +1188,9 @@ function startGainsCleanupLoop() {
     Object.keys(state.recentGains).forEach(clanId => {
       const originalCount = state.recentGains[clanId].length;
       const active = getActiveRecentGains(clanId);
-      if (active.length !== originalCount) {
-        updated = true;
-      }
+      if (active.length !== originalCount) updated = true;
     });
-    
-    if (updated) {
-      renderLeaderboard();
-    }
+    if (updated) renderLeaderboard();
   }, 15000); // Check expiry every 15 seconds
 }
 
@@ -707,10 +1200,14 @@ function init() {
   setupEventListeners();
   startGainsCleanupLoop();
   
-  // Initial fetch
+  // Initial sync fetch
   fetchClanRankings();
   
-  // Start 30 seconds polling interval
+  // Start SGT server clock timer (1 second interval)
+  updateServerClock();
+  state.clockIntervalId = setInterval(updateServerClock, 1000);
+  
+  // Start polling loop
   state.pollIntervalId = setInterval(fetchClanRankings, POLL_INTERVAL);
 }
 
