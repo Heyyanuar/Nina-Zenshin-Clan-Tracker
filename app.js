@@ -26,7 +26,13 @@ const state = {
   bleedingClans: {},    // Bleeding state: { [clanId]: boolean }
   defendingTargetRank: 1, // Default defender rank (1 = Top 1, 2 = Top 2, 3 = Top 3)
   attackPartySize: "solo", // "solo" (drains 1), "party1" (drains 2), "party2" (drains 3)
-  lastRecoveryCheckedMinute: -1
+  lastRecoveryCheckedMinute: -1,
+
+  // Daily Active Players State
+  dailyGains: {},       // Daily gains: { [clanId]: { [memberName]: gain } }
+  yesterdayGains: {},   // Yesterday's gains: { [clanId]: { [memberName]: gain } }
+  lastResetDate: "",    // Last reset date (YYYY-MM-DD) in SGT
+  activeDailyTab: "today" // Active tab: "today" or "yesterday"
 };
 
 // Config
@@ -76,6 +82,21 @@ function formatTime(date) {
   return `${h}:${m}:${s}`;
 }
 
+// Helper to get Singapore Standard Time (SGT) which is UTC+8
+function getSgtTime() {
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  return new Date(utc + (3600000 * 8));
+}
+
+// Helper to format SGT date as YYYY-MM-DD
+function getSgtDateString(sgtTime) {
+  const y = sgtTime.getFullYear();
+  const m = String(sgtTime.getMonth() + 1).padStart(2, '0');
+  const d = String(sgtTime.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 // Load baseline and stamina state from LocalStorage on start
 function loadLocalStorageBaseline() {
   try {
@@ -90,6 +111,11 @@ function loadLocalStorageBaseline() {
     const savedBleeding = localStorage.getItem("nz_bleeding_clans");
     const savedTarget = localStorage.getItem("nz_defending_target");
     const savedPartySize = localStorage.getItem("nz_attack_party_size");
+
+    // Daily gains states
+    const savedDailyGains = localStorage.getItem("nz_daily_gains");
+    const savedYesterdayGains = localStorage.getItem("nz_yesterday_gains");
+    const savedLastResetDate = localStorage.getItem("nz_last_reset_date");
     
     if (savedBaselines) {
       state.clanBaselines = JSON.parse(savedBaselines);
@@ -116,6 +142,30 @@ function loadLocalStorageBaseline() {
       const radio = document.querySelector(`input[name="attackType"][value="${state.attackPartySize}"]`);
       if (radio) radio.checked = true;
     }
+
+    if (savedDailyGains) state.dailyGains = JSON.parse(savedDailyGains);
+    if (savedYesterdayGains) state.yesterdayGains = JSON.parse(savedYesterdayGains);
+    if (savedLastResetDate) state.lastResetDate = savedLastResetDate;
+
+    // Check for offline date cross-over catchup
+    const nowSgt = getSgtTime();
+    const sgtDateStr = getSgtDateString(nowSgt);
+
+    if (state.lastResetDate && state.lastResetDate !== sgtDateStr) {
+      // Midnight SGT has crossed since the tracker was last active!
+      // Shift today's data to yesterday's
+      state.yesterdayGains = JSON.parse(JSON.stringify(state.dailyGains));
+      state.dailyGains = {};
+      state.lastResetDate = sgtDateStr;
+      
+      // Save it immediately
+      localStorage.setItem("nz_daily_gains", JSON.stringify(state.dailyGains));
+      localStorage.setItem("nz_yesterday_gains", JSON.stringify(state.yesterdayGains));
+      localStorage.setItem("nz_last_reset_date", state.lastResetDate);
+    } else if (!state.lastResetDate) {
+      state.lastResetDate = sgtDateStr;
+      localStorage.setItem("nz_last_reset_date", state.lastResetDate);
+    }
   } catch (e) {
     console.error("Failed to load baseline from localStorage:", e);
   }
@@ -134,6 +184,11 @@ function saveLocalStorageBaseline() {
     localStorage.setItem("nz_bleeding_clans", JSON.stringify(state.bleedingClans));
     localStorage.setItem("nz_defending_target", state.defendingTargetRank);
     localStorage.setItem("nz_attack_party_size", state.attackPartySize);
+
+    // Daily active gains
+    localStorage.setItem("nz_daily_gains", JSON.stringify(state.dailyGains));
+    localStorage.setItem("nz_yesterday_gains", JSON.stringify(state.yesterdayGains));
+    localStorage.setItem("nz_last_reset_date", state.lastResetDate);
   } catch (e) {
     console.error("Failed to save baseline to localStorage:", e);
   }
@@ -251,6 +306,7 @@ async function fetchClanRankings() {
     renderLiveFeed();
     renderSessionSummary();
     renderBleedingWidget();
+    renderDailyActivePlayers();
     populateOpsClanSelect();
     
   } catch (error) {
@@ -550,6 +606,14 @@ function logGainEvent(memberName, clanName, clanId, gain) {
     gain,
     timestamp: timestamp.getTime()
   });
+
+  // 3. Accumulate Daily Active Player reputation
+  if (!state.dailyGains[clanId]) state.dailyGains[clanId] = {};
+  if (!state.dailyGains[clanId][memberName]) state.dailyGains[clanId][memberName] = 0;
+  state.dailyGains[clanId][memberName] += gain;
+
+  // Render the widget with updated data
+  renderDailyActivePlayers();
 }
 
 // Log generic system event to the live activity feed
@@ -722,6 +786,70 @@ function renderSessionSummary() {
     <div class="stat-row">
       <span class="stat-clan">${escapeHtml(clanName)}</span>
       <span class="stat-value">+${total.toLocaleString()}</span>
+    </div>
+  `).join("");
+}
+
+// Render Daily Active Players widget in sidebar
+function renderDailyActivePlayers() {
+  const body = document.getElementById("dailyActiveWidgetBody");
+  if (!body) return;
+
+  const data = state.activeDailyTab === "today" ? state.dailyGains : state.yesterdayGains;
+  
+  // Group player gains by clan
+  const activeClans = [];
+
+  Object.entries(data).forEach(([clanId, players]) => {
+    const clanIdInt = parseInt(clanId, 10);
+    const clan = state.clans.find(c => c.id === clanIdInt);
+    const clanName = clan ? clan.name : `Clan #${clanId}`;
+    const clanRank = clan ? clan.rank : 99;
+    
+    // Get list of active players and sort by gain descending
+    const playerGains = Object.entries(players)
+      .filter(([_, gain]) => gain > 0)
+      .sort((a, b) => b[1] - a[1]);
+      
+    if (playerGains.length > 0) {
+      const clanTotalGain = playerGains.reduce((sum, [_, gain]) => sum + gain, 0);
+      activeClans.push({
+        id: clanIdInt,
+        name: clanName,
+        rank: clanRank,
+        totalGain: clanTotalGain,
+        players: playerGains
+      });
+    }
+  });
+
+  // Sort clans by total daily gain descending
+  activeClans.sort((a, b) => b.totalGain - a.totalGain);
+
+  if (activeClans.length === 0) {
+    const activeText = state.activeDailyTab === "today" ? "today" : "yesterday";
+    body.innerHTML = `
+      <div class="log-empty">
+        No active member contributions recorded ${activeText}.
+      </div>
+    `;
+    return;
+  }
+
+  body.innerHTML = activeClans.map(c => `
+    <div class="daily-clan-section">
+      <div class="daily-clan-title">
+        <span>${escapeHtml(c.name)} (Rank ${c.rank})</span>
+        <span class="clan-total-gain">+${c.totalGain.toLocaleString()}</span>
+      </div>
+      <div class="daily-players-list">
+        ${c.players.map(([name, gain]) => `
+          <div class="daily-player-tag">
+            <span class="daily-player-name">${escapeHtml(name)}</span>
+            <span class="daily-player-gain">+${gain.toLocaleString()}</span>
+          </div>
+        `).join("")}
+      </div>
     </div>
   `).join("");
 }
@@ -961,6 +1089,38 @@ function updateServerClock() {
   const s = String(sgtTime.getSeconds()).padStart(2, '0');
   clockEl.textContent = `${h}:${m}:${s} SGT`;
   
+  // 1. Check for SGT date shift (Midnight reset, corresponding to 23:00 WIB)
+  const sgtDateStr = getSgtDateString(sgtTime);
+  if (state.lastResetDate && state.lastResetDate !== sgtDateStr) {
+    state.yesterdayGains = JSON.parse(JSON.stringify(state.dailyGains));
+    state.dailyGains = {};
+    state.lastResetDate = sgtDateStr;
+    
+    logSystemEvent("[Daily Reset] Daily active player reputation logs have been reset at 23:00 WIB (00:00 SGT). Yesterday's summary has been archived.", true);
+    
+    saveLocalStorageBaseline();
+    renderDailyActivePlayers();
+  } else if (!state.lastResetDate) {
+    state.lastResetDate = sgtDateStr;
+    saveLocalStorageBaseline();
+  }
+
+  // 2. Render countdown until next reset
+  const tomorrowSgt = new Date(sgtTime);
+  tomorrowSgt.setHours(24, 0, 0, 0); // Sets to midnight SGT of next day
+  const msLeft = tomorrowSgt.getTime() - sgtTime.getTime();
+  
+  const pad = (n) => String(n).padStart(2, '0');
+  const hrs = Math.floor(msLeft / 3600000);
+  const mins = Math.floor((msLeft % 3600000) / 60000);
+  const secs = Math.floor((msLeft % 60000) / 1000);
+  
+  const timerEl = document.getElementById("dailyResetTimer");
+  if (timerEl) {
+    timerEl.textContent = `Reset: ${pad(hrs)}:${pad(mins)}:${pad(secs)}`;
+  }
+
+  // 3. Check for stamina recovery ticks
   checkStaminaRecoveryTicks(sgtTime);
 }
 
@@ -1177,6 +1337,24 @@ function setupEventListeners() {
       if (state.activeClanIdForModal === clanId) {
         openMembersModal(clanId, clanName);
       }
+    });
+  }
+
+  // 11. Daily Active Players Widget Tab Swapping
+  const tabToday = document.getElementById("tabDailyToday");
+  const tabYesterday = document.getElementById("tabDailyYesterday");
+  if (tabToday && tabYesterday) {
+    tabToday.addEventListener("click", () => {
+      state.activeDailyTab = "today";
+      tabToday.classList.add("active");
+      tabYesterday.classList.remove("active");
+      renderDailyActivePlayers();
+    });
+    tabYesterday.addEventListener("click", () => {
+      state.activeDailyTab = "yesterday";
+      tabYesterday.classList.add("active");
+      tabToday.classList.remove("active");
+      renderDailyActivePlayers();
     });
   }
 }

@@ -895,3 +895,469 @@ body {
         padding: 12px 16px;
     }
 }
+
+/* ==========================================
+   SIMULATION SETTINGS CARD
+   ========================================== */
+.settings-card {
+    background-color: var(--card-bg);
+    border: 2px solid var(--card-border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-md);
+    overflow: hidden;
+    transition: all var(--transition-normal);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    margin-bottom: 24px;
+}
+
+.settings-card:hover {
+    border-color: var(--card-border-hover);
+    box-shadow: var(--shadow-glow), var(--shadow-md);
+}
+
+.settings-body {
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.25);
+    border-top: 1px solid rgba(192, 25, 44, 0.15);
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 24px;
+}
+
+.settings-group {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.settings-group h3 {
+    font-family: var(--font-display);
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--accent-gold);
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 6px;
+    margin-bottom: 4px;
+}
+
+.setting-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.setting-item label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.setting-item select {
+    background: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(192, 25, 44, 0.3);
+    border-radius: 6px;
+    color: var(--text-primary);
+    padding: 8px 12px;
+    font-size: 0.85rem;
+    font-family: var(--font-body);
+    transition: all var(--transition-fast);
+    cursor: pointer;
+    width: 100%;
+}
+
+.setting-item select:focus:not(:disabled) {
+    border-color: var(--accent-red-bright);
+    box-shadow: 0 0 6px rgba(192, 25, 44, 0.4);
+    outline: none;
+}
+
+.setting-item select:disabled, 
+.setting-item input:disabled, 
+.control-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    border-color: rgba(255, 255, 255, 0.1);
+}
+
+.radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.3);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.radio-group label {
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.radio-group input[type="radio"] {
+    accent-color: var(--accent-red);
+    cursor: pointer;
+    margin: 0;
+}
+
+.settings-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-end;
+}
+
+.settings-row .setting-item {
+    flex-grow: 1;
+}
+
+.settings-row .setting-item-btn {
+    flex-shrink: 0;
+}
+
+.red-border-btn {
+    border-color: rgba(192, 25, 44, 0.6) !important;
+    background: rgba(192, 25, 44, 0.05) !important;
+    color: var(--text-primary) !important;
+    height: 32px;
+}
+
+.red-border-btn:hover:not(:disabled) {
+    border-color: var(--accent-red-bright) !important;
+    background: rgba(192, 25, 44, 0.2) !important;
+    box-shadow: 0 0 8px rgba(192, 25, 44, 0.4) !important;
+}
+
+/* ==========================================
+   BLEEDING STATUS WIDGET
+   ========================================== */
+.bleed-tracker-card {
+    border-color: rgba(192, 25, 44, 0.3);
+}
+
+.bleed-widget-body {
+    background: rgba(0, 0, 0, 0.15);
+    padding: 16px;
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.bleed-clan-card {
+    background: rgba(192, 25, 44, 0.03);
+    border: 1px solid rgba(192, 25, 44, 0.2);
+    border-left: 4px solid var(--accent-red);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    animation: pulseBorder 2s infinite alternate;
+}
+
+@keyframes pulseBorder {
+    0% { border-color: rgba(192, 25, 44, 0.2); }
+    100% { border-color: rgba(192, 25, 44, 0.45); box-shadow: 0 0 4px rgba(192, 25, 44, 0.1); }
+}
+
+.bleed-clan-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.bleed-clan-name {
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.bleed-droplet {
+    color: var(--accent-red-bright);
+    animation: pulseDroplet 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes pulseDroplet {
+    from { transform: scale(0.9); filter: drop-shadow(0 0 1px var(--accent-red-bright)); }
+    to { transform: scale(1.15); filter: drop-shadow(0 0 5px var(--accent-red-bright)); }
+}
+
+.bleed-recovery-fraction {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.3);
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.bleed-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    background: rgba(0,0,0,0.2);
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+
+.bleed-stat-val {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* ==========================================
+   STAMINA PROGRESS BARS
+   ========================================== */
+.stamina-bar-container {
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    height: 8px;
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100%;
+}
+
+.stamina-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease-out;
+}
+
+/* Color codes */
+.stamina-bar.high {
+    background: linear-gradient(90deg, #2ecc71, #27ae60);
+    box-shadow: 0 0 4px rgba(46, 204, 113, 0.3);
+}
+
+.stamina-bar.medium {
+    background: linear-gradient(90deg, #f1c40f, #e67e22);
+    box-shadow: 0 0 4px rgba(241, 196, 15, 0.3);
+}
+
+.stamina-bar.low {
+    background: linear-gradient(90deg, #e74c3c, #c0392b);
+    box-shadow: 0 0 4px rgba(231, 76, 60, 0.3);
+    animation: flashBar 1.5s infinite alternate;
+}
+
+@keyframes flashBar {
+    from { opacity: 0.85; }
+    to { opacity: 1; filter: brightness(1.2); }
+}
+
+.modal-stamina-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 150px;
+}
+
+.modal-stamina-val {
+    font-family: monospace;
+    font-weight: 700;
+    width: 48px;
+    text-align: right;
+    font-size: 0.8rem;
+}
+
+.modal-stamina-val.high { color: #2ecc71; }
+.modal-stamina-val.medium { color: #f1c40f; }
+.modal-stamina-val.low { color: #e74c3c; font-weight: 800; }
+
+/* Flashing droplet badge for leaderboard */
+.clan-bleed-badge {
+    background: rgba(192, 25, 44, 0.2);
+    border: 1px solid rgba(192, 25, 44, 0.4);
+    color: var(--accent-red-bright);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 800;
+    margin-left: 6px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    box-shadow: 0 0 4px rgba(192, 25, 44, 0.2);
+    vertical-align: middle;
+}
+
+/* ==========================================
+   RESPONSIVE OVERRIDES
+   ========================================== */
+@media (max-width: 768px) {
+    .settings-grid {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+    
+    .settings-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+}
+
+/* ==========================================
+   DAILY ACTIVE MEMBERS WIDGET
+   ========================================== */
+.daily-active-card {
+    border-color: rgba(192, 25, 44, 0.25);
+}
+
+.flex-column-mobile {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.reset-timer {
+    font-size: 0.75rem;
+    font-family: monospace;
+    color: var(--accent-gold);
+    background: rgba(0, 0, 0, 0.4);
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(245, 196, 81, 0.2);
+    font-weight: 700;
+}
+
+.tab-switcher {
+    display: flex;
+    background: rgba(0, 0, 0, 0.25);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 10px;
+    font-family: var(--font-display);
+    font-size: 0.85rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    outline: none;
+    text-align: center;
+}
+
+.tab-btn:hover:not(.active) {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.tab-btn.active {
+    color: var(--accent-gold);
+    background: rgba(192, 25, 44, 0.08);
+    border-bottom: 2px solid var(--accent-gold);
+}
+
+.daily-widget-body {
+    background: rgba(0, 0, 0, 0.15);
+    padding: 16px;
+    height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.daily-clan-section {
+    background: rgba(255, 255, 255, 0.01);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+    border-left: 3px solid var(--accent-gold);
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: transform var(--transition-fast);
+}
+
+.daily-clan-section:hover {
+    transform: translateX(4px);
+    background: rgba(255, 255, 255, 0.02);
+    border-left-color: var(--accent-red);
+}
+
+.daily-clan-title {
+    font-weight: 700;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    border-bottom: 1.5px solid rgba(255, 255, 255, 0.05);
+    padding-bottom: 4px;
+    margin-bottom: 2px;
+    display: flex;
+    justify-content: space-between;
+}
+
+.daily-clan-title .clan-total-gain {
+    color: var(--accent-green);
+    font-weight: 800;
+}
+
+.daily-players-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.daily-player-tag {
+    display: inline-flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 0.74rem;
+    transition: border-color var(--transition-fast);
+}
+
+.daily-player-tag:hover {
+    border-color: rgba(91, 209, 127, 0.3);
+}
+
+.daily-player-name {
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-right: 5px;
+}
+
+.daily-player-tag:hover .daily-player-name {
+    color: var(--text-primary);
+}
+
+.daily-player-gain {
+    color: var(--accent-green);
+    font-weight: 700;
+}
+
+@media (max-width: 480px) {
+    .flex-column-mobile {
+        flex-direction: column;
+        align-items: stretch;
+        text-align: center;
+    }
+    
+    .reset-timer {
+        align-self: center;
+    }
+}
