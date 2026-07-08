@@ -32,7 +32,8 @@ const state = {
   dailyGains: {},       // Daily gains: { [clanId]: { [memberName]: gain } }
   yesterdayGains: {},   // Yesterday's gains: { [clanId]: { [memberName]: gain } }
   lastResetDate: "",    // Last reset date (YYYY-MM-DD) in SGT
-  activeDailyTab: "today" // Active tab: "today" or "yesterday"
+  activeDailyTab: "today", // Active tab: "today" or "yesterday"
+  pollInterval: 30000   // Polling speed: 30000ms default
 };
 
 // Config
@@ -143,6 +144,14 @@ function loadLocalStorageBaseline() {
       if (radio) radio.checked = true;
     }
 
+    // Polling speed
+    const savedPollInterval = localStorage.getItem("nz_poll_interval");
+    if (savedPollInterval) {
+      state.pollInterval = parseInt(savedPollInterval, 10);
+      const pollSelect = document.getElementById("pollIntervalSelect");
+      if (pollSelect) pollSelect.value = state.pollInterval;
+    }
+
     if (savedDailyGains) state.dailyGains = JSON.parse(savedDailyGains);
     if (savedYesterdayGains) state.yesterdayGains = JSON.parse(savedYesterdayGains);
     if (savedLastResetDate) state.lastResetDate = savedLastResetDate;
@@ -189,6 +198,7 @@ function saveLocalStorageBaseline() {
     localStorage.setItem("nz_daily_gains", JSON.stringify(state.dailyGains));
     localStorage.setItem("nz_yesterday_gains", JSON.stringify(state.yesterdayGains));
     localStorage.setItem("nz_last_reset_date", state.lastResetDate);
+    localStorage.setItem("nz_poll_interval", state.pollInterval);
   } catch (e) {
     console.error("Failed to save baseline to localStorage:", e);
   }
@@ -1193,6 +1203,24 @@ function setupEventListeners() {
     });
   }
 
+  // Polling Speed Selection
+  const pollSelect = document.getElementById("pollIntervalSelect");
+  if (pollSelect) {
+    pollSelect.addEventListener("change", (e) => {
+      state.pollInterval = parseInt(e.target.value, 10);
+      localStorage.setItem("nz_poll_interval", state.pollInterval);
+      
+      // Reset polling interval timer
+      clearInterval(state.pollIntervalId);
+      state.pollIntervalId = setInterval(fetchClanRankings, state.pollInterval);
+      
+      logSystemEvent(`[Config Update] Polling update speed changed to ${state.pollInterval / 1000} seconds.`);
+      
+      // Immediately trigger fresh sync
+      fetchClanRankings();
+    });
+  }
+
   // 7. Attack Party Size selection (Radio buttons)
   document.querySelectorAll('input[name="attackType"]').forEach(radio => {
     radio.addEventListener("change", (e) => {
@@ -1386,7 +1414,7 @@ function init() {
   state.clockIntervalId = setInterval(updateServerClock, 1000);
   
   // Start polling loop
-  state.pollIntervalId = setInterval(fetchClanRankings, POLL_INTERVAL);
+  state.pollIntervalId = setInterval(fetchClanRankings, state.pollInterval);
 }
 
 // Start app once DOM content is loaded

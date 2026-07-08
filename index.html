@@ -95,6 +95,15 @@
                                         </select>
                                     </div>
                                     <div class="setting-item">
+                                        <label for="pollIntervalSelect">Polling Update Speed:</label>
+                                        <select id="pollIntervalSelect">
+                                            <option value="5000">5 Seconds (Very Fast / Aggressive)</option>
+                                            <option value="10000">10 Seconds (Fast)</option>
+                                            <option value="30000" selected>30 Seconds (Normal - Recommended)</option>
+                                            <option value="60000">60 Seconds (Safe / Background)</option>
+                                        </select>
+                                    </div>
+                                    <div class="setting-item">
                                         <label>Assumed Party Size (Defending Stamina Drain):</label>
                                         <div class="radio-group">
                                             <label><input type="radio" name="attackType" value="solo" checked> Solo (Drains 1 defender)</label>
